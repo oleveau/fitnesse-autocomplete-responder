@@ -35,6 +35,7 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import javassist.*;
 
 /**
  * Responder for use with autocomplete javascript.
@@ -71,7 +72,12 @@ public class AutoCompleteResponder extends WikiPageResponder {
         METHODS_TO_IGNORE.add("notify");
         METHODS_TO_IGNORE.add("notifyAll");
         METHODS_TO_IGNORE.add("wait");
-        METHODS_TO_IGNORE.add("hashCode");
+		METHODS_TO_IGNORE.add("Table");
+        METHODS_TO_IGNORE.add("BeginTable");
+		METHODS_TO_IGNORE.add("EndTable");
+		METHODS_TO_IGNORE.add("Reset");
+		METHODS_TO_IGNORE.add("Execute");
+		METHODS_TO_IGNORE.add("GetTableValues");
     }
 
     private JSONObject json = new JSONObject();
@@ -164,7 +170,7 @@ public class AutoCompleteResponder extends WikiPageResponder {
 
     private void addClassesToAutocompleteList() {
         for (String pkg : packages) {
-            Set<Class> classList = new HashSet<>();
+            Set<CtClass> classList = new HashSet<>();
 
             try {
                 classList.addAll(ClassFinder.getClasses(pkg, false, classLoader));
@@ -172,17 +178,17 @@ public class AutoCompleteResponder extends WikiPageResponder {
                 LOGGER.error("Exception for package: " + pkg + " - " + e.getMessage());
             }
 
-            for (Class klass : classList) {
+            for (CtClass klass : classList) {
                 JSONObject thisClass = new JSONObject();
-                JSONObject javaDocForClass = javadocForClass(klass);
+                //JSONObject javaDocForClass = javadocForClass(klass);
 
-                if (javaDocForClass.length() > 0) {
+                /*if (javaDocForClass.length() > 0) {
                     thisClass.put("methods", javaDocForClass.get("publicMethods"));
                     thisClass.put("constructors", javaDocForClass.get("constructors"));
-                } else {
-                    thisClass.put("methods", getMethodsByReflection(klass));
-                    thisClass.put("constructors", getConstructorsByReflection(klass));
-                }
+                } else {*/
+                    thisClass.put("methods", getMethods(klass));
+                    thisClass.put("constructors", getConstructors(klass));
+                //}
 
                 thisClass.put("qualifiedName", klass.getName());
                 thisClass.put("readableName", splitCamelCase(klass.getSimpleName()));
@@ -213,6 +219,70 @@ public class AutoCompleteResponder extends WikiPageResponder {
         } catch (NoClassDefFoundError err) {
             //intentionally ignore classes that cannot be found
         }
+        return cConstructors;
+    }
+
+    private JSONArray getMethods(CtClass klass) {
+        JSONArray cMethods = new JSONArray();
+        try {
+            CtMethod[] methods = klass.getMethods();
+            for (CtMethod method : methods) {
+                if (!METHODS_TO_IGNORE.contains(method.getName()) || method.getDeclaringClass().equals(klass)) {
+
+                    String readableMethodName = splitCamelCase(method.getName());
+                    String usage = generateMethodUsageString2(readableMethodName, method.getParameterTypes());
+                    String contextHelp = usage.substring(2)
+                            .replaceAll("\\| \\[(\\w+)] \\|", "&lt;$1&gt;")
+                            .replace("|", "")
+                            .trim();
+
+                    JSONObject thisMethod = new JSONObject();
+
+                    thisMethod.put(NAME, splitCamelCase(method.getName()));
+                    thisMethod.put(READABLENAME, readableMethodName);
+                    thisMethod.put(PARAMETERS, parseParameterTypes2(method.getParameterTypes()));
+                    thisMethod.put(EXCEPTIONS, parseExceptionTypes2(method.getExceptionTypes()));
+                    //thisMethod.put(ANNOTATIONS, parseAnnotations(method.getAvailableAnnotations()));
+                    thisMethod.put(USAGE, usage);
+                    thisMethod.put(CONTEXT_STR, contextHelp);
+                    thisMethod.put(WIKI_TEXT, usage.substring(2));
+
+                    cMethods.put(thisMethod);
+                }
+            }
+        } catch (NoClassDefFoundError err) {
+            //intentionally ignore classes that cannot be found
+        }
+		catch (NotFoundException er){
+			//intentionally ignore classes that cannot be found
+		}
+        return cMethods;
+    }
+	
+    private JSONArray getConstructors(CtClass klass) {
+        JSONArray cConstructors = new JSONArray();
+        try {
+            CtConstructor[] constructors = klass.getConstructors();
+            for (CtConstructor constructor : constructors) {
+                String usage = generateConstructorUsageString2(klass.getSimpleName(), constructor.getParameterTypes());
+                JSONObject thisConstructor = new JSONObject();
+
+                thisConstructor.put(NAME, klass.getSimpleName());
+                thisConstructor.put(READABLENAME, splitCamelCase(klass.getSimpleName()));
+                thisConstructor.put(PARAMETERS, parseParameterTypes2(constructor.getParameterTypes()));
+                //thisConstructor.put(ANNOTATIONS, parseAnnotations(constructor.getAvailableAnnotations()));
+                thisConstructor.put(EXCEPTIONS, parseExceptionTypes2(constructor.getExceptionTypes()));
+                thisConstructor.put(USAGE, usage);
+                thisConstructor.put(WIKI_TEXT, usage.substring(2));
+
+                cConstructors.put(thisConstructor);
+            }
+        } catch (NoClassDefFoundError err) {
+            //intentionally ignore classes that cannot be found
+        }
+				catch (NotFoundException er){
+			//intentionally ignore classes that cannot be found
+		}
         return cConstructors;
     }
 
@@ -259,6 +329,24 @@ public class AutoCompleteResponder extends WikiPageResponder {
         }
         return parameters;
     }
+	
+	    private JSONArray parseParameterTypes2(CtClass[] parameterTypes) {
+        JSONArray parameters = new JSONArray();
+        for (CtClass p : parameterTypes) {
+            JSONObject thisParam = new JSONObject();
+            thisParam.put(TYPE, p.getSimpleName());
+            parameters.put(thisParam);
+        }
+        return parameters;
+    }
+
+    private JSONArray parseExceptionTypes2(CtClass[] exceptionTypes) {
+        JSONArray exceptions = new JSONArray();
+        for (CtClass e : exceptionTypes) {
+            exceptions.put(e.getSimpleName());
+        }
+        return exceptions;
+    }
 
     private JSONArray parseExceptionTypes(Class<?>[] exceptionTypes) {
         JSONArray exceptions = new JSONArray();
@@ -276,6 +364,18 @@ public class AutoCompleteResponder extends WikiPageResponder {
         return annotations;
     }
 
+    private static String generateConstructorUsageString2(String name, CtClass[] parameterTypes) {
+        StringBuilder wikiText = new StringBuilder("| ");
+        wikiText.append(splitCamelCase(name))
+                .append(" |");
+        for (CtClass parameterType : parameterTypes) {
+            String paramDisplay = String.format(" [%s]", parameterType.getName());
+            wikiText.append(paramDisplay)
+                    .append(" |");
+        }
+        return wikiText.toString();
+    }
+	
     private static String generateConstructorUsageString(String name, Class<?>[] parameterTypes) {
         StringBuilder wikiText = new StringBuilder("| ");
         wikiText.append(splitCamelCase(name))
@@ -288,6 +388,52 @@ public class AutoCompleteResponder extends WikiPageResponder {
         return wikiText.toString();
     }
 
+	private String generateMethodUsageString2(String readableMethodName, CtClass[] parameterTypes) {
+        String[] methodNameParts = readableMethodName.split(" ");
+
+        int numberOfParts = methodNameParts.length;
+        int numberOfParams = parameterTypes.length;
+
+        StringBuilder result = new StringBuilder("| ");
+        if (numberOfParams > numberOfParts) {
+            result.append(readableMethodName)
+                    .append(" | ");
+            for (CtClass param : parameterTypes) {
+                result.append(param.getSimpleName())
+                        .append(", ");
+            }
+            result.append(" |");
+        } else {
+            int totalCells = numberOfParts + numberOfParams;
+
+            List<Integer> paramPositions = new ArrayList<>();
+            int paramPosition = totalCells - 1;
+
+            int n = 0;
+            while (n < numberOfParams) {
+                paramPositions.add(paramPosition);
+                paramPosition -= 2;
+                n++;
+            }
+            int prm = 0;
+            for (int p = 0; p < totalCells; p++) {
+                if (!paramPositions.contains(p)) {
+                    result.append(methodNameParts[p - prm])
+                            .append(" ");
+                } else {
+                    result.append("| [")
+                            .append(parameterTypes[prm].getSimpleName())
+                            .append("] | ");
+                    prm++;
+                }
+            }
+            if (numberOfParams == 0) {
+                result.append("|");
+            }
+        }
+        return result.toString();
+    }
+	
     private String generateMethodUsageString(String readableMethodName, Class<?>[] parameterTypes) {
         String[] methodNameParts = readableMethodName.split(" ");
 
@@ -538,7 +684,7 @@ public class AutoCompleteResponder extends WikiPageResponder {
                         "(?<=[A-Za-z])(?=[^A-Za-z])"
                 ),
                 " "
-        ).toLowerCase();
+        );
     }
 
     private JSONObject javadocForClass(Class klass) {
