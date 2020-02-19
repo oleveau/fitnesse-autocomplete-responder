@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
+import javassist.*;
 
 /**
  * Class to find classes by package, from fileSystem or JAR Based on code from:
@@ -24,10 +25,11 @@ import java.util.jar.JarFile;
 public class ClassFinder {
     private static final Logger LOGGER = LoggerFactory.getLogger(ClassFinder.class);
 
-    public static List<Class> getClasses(String packageName, boolean recursive, URLClassLoader classLoader)
+    public static List<CtClass> getClasses(String packageName, boolean recursive, URLClassLoader classLoader)
             throws ClassNotFoundException, IOException {
 
-        String path = packageName.replace('.', '/');
+        /*String path = packageName.replace('.', '/');
+		LOGGER.info("[Class Finder]Loading: " + path);
         Enumeration resources = classLoader.getResources(path);
         List<File> dirs = new ArrayList<>();
 
@@ -38,13 +40,20 @@ public class ClassFinder {
         List<Class> classes = new ArrayList<>();
         for (File directory : dirs) {
             classes.addAll(findClasses(directory, packageName, recursive, classLoader));
-        }
+        }*/
+		List<CtClass> classes = new ArrayList<>();
+		classes.addAll(findClasses(packageName, false, classLoader));
         return classes;
     }
 
-    private static Set<Class> findClasses(File directory, String packageName, boolean recursive, URLClassLoader classLoader) throws ClassNotFoundException {
-        Set<Class> classes = new HashSet<>();
-        if (!directory.exists()) {
+    private static Set<CtClass> findClasses(String packageName, boolean recursive, URLClassLoader classLoader) throws ClassNotFoundException {
+        Set<CtClass> classes = new HashSet<>();
+
+		String jarFile = "fixtures.jar";
+		classes.addAll(getClassesFromJar(jarFile, packageName, classLoader));
+		
+                //jarFile = jarFile.replace("file:", "");
+        /*if (!directory.exists()) {
             if (directory.getPath().contains(".jar")) {
                 String jarFile = directory.getPath().split("!")[0].replace("file:\\", "");
                 jarFile = jarFile.replace("file:", "");
@@ -65,44 +74,59 @@ public class ClassFinder {
                     classes.add(classLoader.loadClass(packageName + '.' + file.getName().substring(0, file.getName().length() - 6)));
                 }
             }
-        }
+        }*/
         return classes;
     }
 
-    private static List<Class> getClassesFromJar(String jar, String pkg, URLClassLoader classLoader) {
-        List<Class> jarClasses = new ArrayList<>();
+    private static List<CtClass> getClassesFromJar(String jar, String pkg, URLClassLoader classLoader) {
+        List<CtClass> jarClasses = new ArrayList<>();
         try (JarFile jarFile = new JarFile(jar)) {
             Enumeration<JarEntry> e = jarFile.entries();
-            URL[] urls = {new URL("jar:file:" + jar + "!/")};
-            URLClassLoader cl = new URLClassLoader(urls, classLoader);
+           /* URL[] urls = {new URL("jar:file:" + jar + "!/")};
+            URLClassLoader cl = URLClassLoader.newInstance(urls);*/
+			ClassPool cp = ClassPool.getDefault();
+			cp.insertClassPath( jar );
             String pkgName;
             while (e.hasMoreElements()) {
                 JarEntry je = e.nextElement();
                 if (je.isDirectory() || !je.getName().endsWith(".class") || je.getName().contains("$")) {
                     continue;
                 }
+				if (je.getName().contains(".Fitnesse") || je.getName().contains("Service.") || je.getName().contains("Client.")) {
+                    continue;
+                }
                 String fqClassName = je.getName().substring(0, je.getName().length() - 6);
                 fqClassName = fqClassName.replace('/', '.');
                 if (fqClassName.lastIndexOf('.') >= 0) {
-                    pkgName = fqClassName.substring(0, fqClassName.lastIndexOf('.'));
+                    pkgName = fqClassName.substring(4, fqClassName.lastIndexOf('.'));
                 } else {
                     pkgName = "";
                 }
+				//LOGGER.info("JEntry: " + je.getName() + "pkg : " + pkgName);
                 if (pkgName.equals(pkg)) {
+					LOGGER.info("JEntry: " + fqClassName);
                     try {
-                        Class c = cl.loadClass(fqClassName);
+						CtClass ctClass = cp.get(fqClassName);
+						//Class c = cl.loadClass(fqClassName);
                         //Ignore classes without any public constructor
-                        if (c.getConstructors().length > 0) {
-                            jarClasses.add(c);
+                        if (ctClass.getConstructors().length > 0) {
+                            jarClasses.add(ctClass);
                         }
-                    } catch (ClassNotFoundException ex) {
+                    } catch (NotFoundException ex) {
+						LOGGER.info("Not found");
                         //intentionally ignore classes that cannot be found
                     }
+					catch (NoClassDefFoundError ex) {
+						LOGGER.info("No class def");
+					}
                 }
             }
         } catch (IOException e) {
             LOGGER.error("IOException: " + e);
-        }
+		} catch (NotFoundException ex) {
+			LOGGER.info("Not found");
+		//intentionally ignore classes that cannot be found
+		}
         return jarClasses;
     }
 }
