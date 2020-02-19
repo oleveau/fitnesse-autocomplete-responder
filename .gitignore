@@ -1,2 +1,6 @@
 .idea
 *.iml
+target
+target/*
+target/classes/nl/praegus/fitnesse/responders/AutoCompleteResponder.class
+target/classes/nl/praegus/fitnesse/responders/util/ClassFinder.class
