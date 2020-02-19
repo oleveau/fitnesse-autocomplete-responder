@@ -35,7 +35,8 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
-import javassist.*;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 
 /**
  * Responder for use with autocomplete javascript.
@@ -95,8 +96,9 @@ public class AutoCompleteResponder extends WikiPageResponder {
         context = pagecontext;
         page = loadPage(context, request.getResource(), request.getMap());
         setClassPathsForPage();
-        getAutoCompleteDataFromPage();
-
+        /*getAutoCompleteDataFromPage();*/
+        
+        if(json.isEmpty()) getAutoCompleteDataFromFile();
         SimpleResponse response = new SimpleResponse();
         response.setMaxAge(0);
         response.setStatus(200);
@@ -104,6 +106,20 @@ public class AutoCompleteResponder extends WikiPageResponder {
         response.setContent(json.toString(3));
 
         return response;
+    }
+
+    private void getAutoCompleteDataFromFile() {
+        try{
+            WikiTestPage testPage = new WikiTestPage(page);
+            ClassPath classPath = testPage.getClassPath();
+            String jsonPath = classPath.toString().replaceAll(".dll", ".json");
+            LOGGER.info("Loading json from:" + jsonPath);
+        String content = new String(Files.readAllBytes(Paths.get(jsonPath)));
+        json = new JSONObject(content);
+        }
+        catch (IOException err){
+            LOGGER.error(err.toString());
+        }
     }
 
     private void getAutoCompleteDataFromPage() {
@@ -657,6 +673,7 @@ public class AutoCompleteResponder extends WikiPageResponder {
         for (String path : classPath.getElements()) {
             File classPathItem = new File(path);
             try {
+                LOGGER.info("URL" + classPathItem.toURI().toURL().toString());
                 urls[i] = classPathItem.toURI().toURL();
             } catch (MalformedURLException e) {
                 //this shouldn't happen!
@@ -664,12 +681,12 @@ public class AutoCompleteResponder extends WikiPageResponder {
             }
             i++;
         }
-
         addToClassPath(urls);
     }
 
     private void addToClassPath(URL[] urls) {
         try {
+            
             classLoader = new URLClassLoader(urls, ClassLoader.getSystemClassLoader());
         } catch (Exception e) {
             LOGGER.error(e.getMessage());
